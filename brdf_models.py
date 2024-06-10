@@ -5,14 +5,6 @@ import os
 import inspect
 import copy
 
-filename = inspect.getframeinfo(inspect.currentframe()).filename
-current_dir = os.path.dirname(os.path.abspath(filename))
-
-ind = current_dir.find('metis')
-metis_dir = current_dir[0:ind+5]
-sys.path.append(metis_dir)
-
-import utilities.attitude as att
 
 
 def compute_mapp_lambert(phase_angle, sat_rg, sat_radius, albedo=0.1):
@@ -30,9 +22,9 @@ def compute_mapp_lambert(phase_angle, sat_rg, sat_radius, albedo=0.1):
     phase_angle : float
         angle at satellite between sun vector and observer vector [rad]
     sat_rg : float
-        range from observer to satellite [km]
+        range from observer to satellite [m]
     sat_radius : float
-        radius of spherical satellite [km]
+        radius of spherical satellite [m]
     albedo : float, optional
         unitless reflectivity parameter of object (default = 0.1)
 

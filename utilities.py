@@ -3,6 +3,7 @@ import math
 import copy
 from datetime import datetime, timedelta
 
+import brdf_models as brdf
 
 ###############################################################################
 # Constants - units of meters, kilograms, seconds, radians
@@ -28,12 +29,84 @@ C_sunvis = 455.   # W/m^2 = kg/s^3
 
 
 
+###############################################################################
+# Measurements and Visibility
+###############################################################################
 
-def check_visibility(X, ):
+
+def visibility_and_measurements(X, sensor_ecef, ERA, sun_eci_app, rso_radius,
+                                albedo=0.1, el_mask=np.radians(10.),
+                                sun_elmask=np.radians(-12.)):
     
     
-    return visible_flag
+    # Satellite position in ECI
+    rso_eci = X[0:3].reshape(3,1)
+    
+    # Sensor position in ECI
+    sensor_eci = GMST_ecef2eci(sensor_ecef, ERA)
+    
+    # Compute relative position vectors
+    sat2sun = sun_eci_app - rso_eci
+    sat2sensor = sensor_eci - rso_eci
 
+    # Unit vectors and angles
+    u_sun = sat2sun.flatten()/np.linalg.norm(sat2sun)
+    u_sensor = sat2sensor.flatten()/np.linalg.norm(sat2sensor)
+    u_sat = rso_eci.flatten()/np.linalg.norm(rso_eci)
+
+    phase_angle = math.acos(np.dot(u_sun, u_sensor))
+    sun_angle = math.acos(np.dot(u_sun, -u_sat))
+    
+    # Evaluate Constraints
+    visible_flag = True
+    fail_list = []
+    
+    # Check Station Dark (e.g. sun below -12 deg for nautical twilight)
+    sun_ecef = GMST_eci2ecef(sun_eci_app, ERA)
+    rho_sun_ecef = sun_ecef - sensor_ecef
+    rho_sun_hat_ecef = rho_sun_ecef/np.linalg.norm(rho_sun_ecef)
+    rho_sun_hat_enu = ecef2enu(rho_sun_hat_ecef, sensor_ecef)    
+    sun_el = math.asin(rho_sun_hat_enu[2])
+    
+    if sun_el >= sun_elmask:
+        visible_flag = False
+        fail_list.append('StationSunlit')
+        
+    # Check eclipse
+    r = np.linalg.norm(rso_eci)
+    if r < Re:
+        visible_flag = False
+        fail_list.append('Crash')
+        
+    else:
+        half_cone = math.asin(Re/r)
+        if sun_angle < half_cone:
+            visible_flag = False
+            fail_list.append('Eclipse')
+            
+    # Check RSO elevation mask
+    rso_rg = np.linalg.norm(rso_eci - sensor_eci)
+    rho_hat_eci = (rso_eci - sensor_eci)/rso_rg
+    rho_hat_ecef = GMST_eci2ecef(rho_hat_eci, ERA)
+    rho_hat_enu = ecef2enu(rho_hat_ecef, sensor_ecef)
+    el = math.asin(rho_hat_enu[2])
+    
+    if el <= el_mask:
+        visible_flag = False
+        fail_list.append('rsoElMask')        
+    
+    # Compute measurements
+    ra = math.atan2(rho_hat_eci[1], rho_hat_eci[0])
+    dec = math.asin(rho_hat_eci[2])
+    mapp = brdf.compute_mapp_lambert(phase_angle, rso_rg, rso_radius, albedo)
+    
+    
+    return visible_flag, fail_list, ra, dec, mapp
+
+
+###############################################################################
+# Coordinates and Frame Rotations
+###############################################################################
 
 
 def cart2kep(cart, GM=GME):
@@ -225,6 +298,60 @@ def kep2cart(elem, GM=GME):
     cart = np.concatenate((r_vect, v_vect), axis=0)
     
     return cart
+
+
+def GMST_eci2ecef(r_eci, theta):
+    '''
+    This function converts the coordinates of a position vector from
+    the ECI to ECEF frame using simple z-axis rotation only.
+
+    Parameters
+    ------
+    r_eci : 3x1 numpy array
+      position vector in ECI
+    theta : float
+      earth rotation angle [rad]
+
+    Returns
+    ------
+    r_ecef : 3x1 numpy array
+      position vector in ECEF
+    '''
+
+    R3 = np.array([[ np.cos(theta),  np.sin(theta), 0.],
+                   [-np.sin(theta),  np.cos(theta), 0.],
+                   [0.,              0.,            1.]])
+
+    r_ecef = np.dot(R3, r_eci)
+
+    return r_ecef
+
+
+def GMST_ecef2eci(r_ecef, theta):
+    '''
+    This function converts the coordinates of a position vector from
+    the ECEF to ECI frame using simple z-axis rotation only.
+
+    Parameters
+    ------
+    r_ecef : 3x1 numpy array
+      position vector in ECEF
+    theta : float
+      earth rotation angle [rad]
+
+    Returns
+    ------
+    r_eci : 3x1 numpy array
+      position vector in ECI
+    '''
+
+    R3 = np.array([[np.cos(theta), -np.sin(theta), 0.],
+                   [np.sin(theta),  np.cos(theta), 0.],
+                   [0.,             0.,            1.]])
+
+    r_eci = np.dot(R3, r_ecef)
+
+    return r_eci
 
 
 def ecef2enu(r_ecef, r_site):
